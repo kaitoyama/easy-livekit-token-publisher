@@ -89,6 +89,19 @@ func generateToken(c echo.Context) error {
 		})
 	}
 
+	// Check token expiration
+	exp, ok := claims["exp"].(float64)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error": "Token missing expiration",
+		})
+	}
+	if time.Unix(int64(exp), 0).Before(time.Now()) {
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error": "Token has expired",
+		})
+	}
+
 	name, ok := claims["name"].(string)
 	if !ok || name == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{
