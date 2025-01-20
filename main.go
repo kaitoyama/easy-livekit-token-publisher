@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/x509"
+	"encoding/pem"
 	"net/http"
 	"os"
 	"time"
@@ -8,7 +11,13 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/livekit/protocol/auth"
+	"gopkg.in/square/go-jose.v2/jwt"
 )
+
+const publicKeyPEM = `-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErNkbjzyMz81Np8sBb8Jr3bUOkLW4
+H41Ugac0eSzPyemDvmaCIDpRofi3Rb0EgaSRSqC3IoBgVmQ+bPLtueUtUg==
+-----END PUBLIC KEY-----`
 
 func main() {
 
@@ -31,13 +40,63 @@ func main() {
 }
 
 func generateToken(c echo.Context) error {
-	// Get user ID from X-Forwarded-User header
-	userID := c.Request().Header.Get("X-Forwarded-User")
-	if userID == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{
-			"error": "X-Forwarded-User header is required",
+	// Get and verify JWT
+	authHeader := c.Request().Header.Get("Authorization")
+	if authHeader == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error": "Authorization header is required",
 		})
 	}
+
+	// Parse public key
+	block, _ := pem.Decode([]byte(publicKeyPEM))
+	if block == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to parse public key",
+		})
+	}
+
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to parse public key",
+		})
+	}
+
+	ecdsaPubKey := pubKey.(*ecdsa.PublicKey)
+
+	// Parse and verify JWT
+	tokenString := authHeader[len("Bearer "):]
+	parsedToken, err := jwt.ParseSigned(tokenString)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error": "Invalid token",
+		})
+	}
+
+	// Verify algorithm is ES256
+	if len(parsedToken.Headers) == 0 || parsedToken.Headers[0].Algorithm != "ES256" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error": "Invalid token algorithm",
+		})
+	}
+
+	// Get claims
+	var claims map[string]interface{}
+	if err := parsedToken.Claims(ecdsaPubKey, &claims); err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error": "Invalid token claims",
+		})
+	}
+
+	name, ok := claims["name"].(string)
+	if !ok || name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "name claim is required in JWT",
+		})
+	}
+
+	userID := name
 
 	// Get API key and secret from environment variables
 	apiKey := os.Getenv("LIVEKIT_API_KEY")
