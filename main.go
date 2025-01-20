@@ -18,6 +18,10 @@ func main() {
 	// Middleware
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"http://localhost:8080", "https://*.traq-preview.trapti.tech"},
+		AllowMethods: []string{http.MethodGet, http.MethodPost},
+	}))
 
 	// Routes
 	e.GET("/token", generateToken)
